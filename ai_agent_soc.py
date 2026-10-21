@@ -1,7 +1,10 @@
 import json
 import asyncio
+import hmac
+import html
+import logging
 import os
-import requests
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from crewai import Agent, Task, Crew, LLM
@@ -19,6 +22,12 @@ pipeline_lock = asyncio.Lock()
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+# Token bảo vệ webhook: Wazuh gửi kèm header "X-Webhook-Token" hoặc query "?token=..."
+WAZUH_WEBHOOK_TOKEN = os.environ.get("WAZUH_WEBHOOK_TOKEN", "")
+
+logger = logging.getLogger("soc_agent.webhook")
+if not WAZUH_WEBHOOK_TOKEN:
+    logger.warning("WAZUH_WEBHOOK_TOKEN chưa đặt — webhook /wazuh-alert KHÔNG được xác thực!")
 
 ollama_llm = LLM(
     model="ollama/llama3.2",
@@ -46,22 +55,50 @@ responder_agent = Agent(
     llm=ollama_llm
 )
 
-def send_to_telegram(case_id, title, final_output):
+async def send_to_telegram(case_id, title, final_output):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    message = (
-        f"🚨 <b>[CASE SOAR MULTI-AGENT] - {title}</b>\n"
+    header = (
+        f"🚨 <b>[CASE SOAR MULTI-AGENT] - {html.escape(str(title))}</b>\n"
         f"-----------------------------------------\n"
-        f"📌 <b>Case ID:</b> #INCIDENT_{case_id}\n"
+        f"📌 <b>Case ID:</b> #INCIDENT_{html.escape(str(case_id))}\n"
         f"-----------------------------------------\n"
-        f"{final_output}"
     )
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"})
+    # Cắt văn bản gốc TRƯỚC khi escape để không cắt giữa entity '&amp;'
+    max_body = 4096 - len(header) - len("\n…[đã rút gọn]")
+    parts, used = [], 0
+    for ch in str(final_output):
+        esc = html.escape(ch)
+        if used + len(esc) > max_body:
+            parts.append("\n…[đã rút gọn]")
+            break
+        parts.append(esc)
+        used += len(esc)
+    safe_body = "".join(parts)
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                url,
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": header + safe_body, "parse_mode": "HTML"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+    except Exception as e:  # noqa: BLE001
+        logger.error("Gửi Telegram thất bại: %s", e)
+
+
+def _authorized(request: Request) -> bool:
+    if not WAZUH_WEBHOOK_TOKEN:
+        return True
+    supplied = request.headers.get("X-Webhook-Token") or request.query_params.get("token") or ""
+    return hmac.compare_digest(supplied, WAZUH_WEBHOOK_TOKEN)
 
 # ==========================================
 # CỔNG NHẬN LOG TỪ WAZUH (FASTAPI)
 # ==========================================
 @app.post("/wazuh-alert")
 async def receive_alert(request: Request):
+    if not _authorized(request):
+        raise HTTPException(status_code=401, detail="Sai hoặc thiếu webhook token")
     try:
         alert = await request.json()
         alert_id = alert.get("id", "0000")
@@ -69,7 +106,7 @@ async def receive_alert(request: Request):
         
         minimal_log = {
             "attack_type": rule_desc,
-            "victim_ip": alert.get("data", {}).get("agent", {}).get("ip", "192.168.1.30"), 
+            "victim_ip": (alert.get("agent") or {}).get("ip") or "UNKNOWN",
             "attacker_ip": alert.get("data", {}).get("srcip", "Unknown")
         }
         log_input = json.dumps(minimal_log, indent=2)
@@ -94,7 +131,7 @@ async def receive_alert(request: Request):
         async with pipeline_lock:
             crew_result = await soar_crew.kickoff_async()
         
-        send_to_telegram(alert_id, rule_desc, crew_result.raw)
+        await send_to_telegram(alert_id, rule_desc, crew_result.raw)
         return {"status": "success"}
     except HTTPException:
         raise

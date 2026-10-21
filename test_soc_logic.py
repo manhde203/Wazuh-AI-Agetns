@@ -11,10 +11,13 @@ import json
 import os
 import sys
 import tempfile
-import contextlib
 
 os.environ["REPORT_DIR"] = tempfile.mkdtemp(prefix="soc_reports_")
 os.environ["NO_COLOR"] = "1"
+
+import terminal_ui  # noqa: E402
+
+terminal_ui.init()  # ép UTF-8 cho stdout/stderr (tránh lỗi 'charmap' trên Windows)
 
 import pipeline  # noqa: E402
 from alert_parser import alert_event_time, parse_alert  # noqa: E402

@@ -995,7 +995,7 @@ async def run_pipeline(alerts: list[dict]) -> dict:
         "cia": rs["cia_impact"], "summary": "", "sources": sources,
     }
     case_text = "\n".join([
-        f"verdict: TRUE POSITIVE (this is an attack)", f"attack_type: {concl['attack_type']}",
+        "verdict: TRUE POSITIVE (this is an attack)", f"attack_type: {concl['attack_type']}",
         f"mitre: {concl['mitre_label']}", f"severity: {concl['severity']}", f"priority: {priority}",
         f"source_ip: {f['attacker_ip']}", f"victim: {victim_label}",
         f"alert_count: {f['count']} in {f['duration_sec']} seconds",

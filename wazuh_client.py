@@ -25,7 +25,6 @@ Cursor modes (controlled by START_FROM_NOW env var):
 import os
 import logging
 import httpx
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 

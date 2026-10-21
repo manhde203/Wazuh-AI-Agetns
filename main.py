@@ -110,10 +110,23 @@ async def _telegram_post(message: str) -> None:
         logger.error("Gửi Telegram thất bại: %s | response=%s", e, text)
 
 
+def _escape_fit(text: str, limit: int) -> tuple[str, bool]:
+    """Escape HTML từng ký tự và dừng trước khi vượt limit, để không cắt giữa
+    một entity như '&amp;' (Telegram sẽ từ chối cả tin nhắn)."""
+    out: list[str] = []
+    used = 0
+    for ch in text:
+        esc = html.escape(ch)
+        if used + len(esc) > limit:
+            return "".join(out), True
+        out.append(esc)
+        used += len(esc)
+    return "".join(out), False
+
+
 async def send_telegram(case_id: str, title: str, body: str, priority: str = "P3") -> None:
     emoji = {"P1": "🔴", "P2": "🟠", "P3": "🟡", "P4": "🟢"}.get(priority, "⚪")
     safe_title = html.escape(str(title))
-    safe_body = html.escape(str(body))
     header = (
         f"🚨 <b>[SOC SOAR] {emoji} {priority} — {safe_title}</b>\n"
         f"{'─' * 40}\n"
@@ -122,8 +135,9 @@ async def send_telegram(case_id: str, title: str, body: str, priority: str = "P3
     )
     # Telegram giới hạn toàn bộ message ở 4096 ký tự (không chỉ phần body).
     max_body = 4096 - len(header) - len("\n…[đã rút gọn]")
-    if len(safe_body) > max_body:
-        safe_body = safe_body[:max_body] + "\n…[đã rút gọn]"
+    safe_body, truncated = _escape_fit(str(body), max_body)
+    if truncated:
+        safe_body += "\n…[đã rút gọn]"
     await _telegram_post(header + safe_body)
     logger.info("Đã gửi Telegram case %s (%s).", case_id, priority)
 
@@ -163,6 +177,8 @@ async def process_group(group_key: str, group_alerts: list[dict]) -> None:
         concl = await asyncio.wait_for(run_pipeline(group_alerts), timeout=PIPELINE_TIMEOUT_SEC)
     except asyncio.TimeoutError:
         logger.error("Pipeline timeout (%ds) cho campaign %s", PIPELINE_TIMEOUT_SEC, group_key)
+        # Đặt cooldown cả khi timeout, tránh chạy lại ~17 phút và gửi [TIMEOUT] lặp lại
+        _campaign_cooldown[group_key] = time.time()
         await send_telegram(
             case_id=str(rep["alert_id"])[:12],
             title=f"[TIMEOUT] {rep['rule_desc']}",

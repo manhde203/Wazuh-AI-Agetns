@@ -33,10 +33,13 @@ _out = sys.__stdout__ or sys.stdout
 
 def init() -> None:
     """Ép UTF-8 cho console và bật ANSI trên Windows (nếu có thể)."""
-    try:
-        _out.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
-    except Exception:
-        pass
+    # Cả stdout lẫn stderr (logging ghi ra stderr): tránh UnicodeEncodeError
+    # 'charmap' khi output bị chuyển hướng ra file/pipe trên Windows.
+    for stream in {_out, sys.stdout, sys.stderr}:
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
     if os.name == "nt":
         os.system("")  # bật xử lý ANSI escape trong Windows Terminal/PowerShell
 

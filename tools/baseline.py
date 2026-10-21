@@ -9,7 +9,6 @@ This is the "baseline comparison" component required by the project spec.
 Update BASELINE_RULES to match your environment's normal behavior patterns.
 """
 
-import re
 from crewai.tools import tool
 
 # -----------------------------------------------------------------------

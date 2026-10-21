@@ -20,7 +20,7 @@ async def test():
     idx_pass = os.environ.get("WAZUH_INDEXER_PASSWORD", "")
 
     print(f"\n{'='*55}")
-    print(f"  Wazuh 4.7.5 — kiểm tra kết nối")
+    print("  Wazuh 4.7.5 — kiểm tra kết nối")
     print(f"{'='*55}")
     print(f"  REST API  : https://{host}:{api_port}  (agent info)")
     print(f"  Indexer   : https://{host}:{idx_port}  (alerts)")
